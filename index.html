@@ -48,7 +48,7 @@
 
   <div class="grid">
     <div class="card"><div class="lbl">Topp (siste ¼ s)</div><div class="val"><span id="topp">–</span> <small>A</small></div></div>
-    <div class="card"><div class="lbl">Gass til ESC</div><div class="val"><span id="gass">–</span> <small>µs</small></div></div>
+    <div class="card"><div class="lbl">Gass til våpen</div><div class="val"><span id="gassP">–</span> <small>% (<span id="gass">–</span> µs)</small></div></div>
     <div class="card"><div class="lbl">ESC</div><div class="val" id="esc">–</div></div>
     <div class="card"><div class="lbl">CH1 (styring)</div><div class="val"><span id="ch1">–</span> <small>µs</small></div></div>
     <div class="card">
@@ -84,8 +84,8 @@ let sisteKey = null;
 const chart = new Chart($("graf"), {
   type: "line",
   data: { labels: [], datasets: [
-    { label: "Strøm (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, tension: .2 },
-    { label: "Topp (A)",  data: [], borderColor: "#f5b942", borderWidth: 1, pointRadius: 0, tension: 0, borderDash: [4, 3] }
+    { label: "Strøm, glattet (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, tension: .2 },
+    { label: "Topp siste ¼ s (A)",  data: [], borderColor: "#f5b942", borderWidth: 1, pointRadius: 0, tension: 0, borderDash: [4, 3] }
   ]},
   options: { animation: false,
     plugins: { legend: { labels: { color: "#8a90a0" } } },
@@ -103,6 +103,8 @@ function tegn() {
   $("maks").textContent = f1(s.maks);
   $("topp").textContent = f1(s.topp);
   $("gass").textContent = s.gass ?? "–";
+  // 1000 µs = 0 %, 2000 µs = 100 % (standard ESC-signal)
+  $("gassP").textContent = typeof s.gass === "number" ? Math.round((s.gass - 1000) / 10) : "–";
   $("esc").textContent  = s.esc ?? "–";
   $("ch1").textContent  = s.ch1 ?? "–";
   $("bv").textContent   = f1(s.bv);
@@ -130,7 +132,10 @@ function liveStatus(feil) {
 }
 
 // Første gang: hent de siste MAX_PTS. Deretter: bare det som er nytt siden sisteKey.
+let henter = false;       // hindrer at to henting overlapper (ga dobbeltrader på treg mobildata)
 async function hent() {
+  if (henter) return;
+  henter = true;
   try {
     const q = sisteKey
       ? 'orderBy="$key"&startAt="' + sisteKey + '"'
@@ -138,7 +143,8 @@ async function hent() {
     const r = await fetch(DB_URL + "/readings.json?" + q);
     const d = await r.json();
     if (d && typeof d === "object") {
-      const nye = Object.keys(d).sort().filter(k => k !== sisteKey).map(k => ({ key: k, ...d[k] }));
+      const kjente = new Set(punkter.map(p => p.key));
+      const nye = Object.keys(d).sort().filter(k => !kjente.has(k)).map(k => ({ key: k, ...d[k] }));
       if (nye.length) {
         punkter = punkter.concat(nye).slice(-MAX_PTS);
         sisteKey = nye[nye.length - 1].key;
@@ -148,6 +154,8 @@ async function hent() {
     liveStatus(false);
   } catch (e) {
     liveStatus(true);
+  } finally {
+    henter = false;
   }
 }
 setInterval(hent, POLL_MS);
