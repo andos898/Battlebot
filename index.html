@@ -30,6 +30,9 @@
   button.sec { background:#2a2f3a; }
   button.danger { background:#3a2226; color:#ff8a8a; }
   .knapper { display:flex; gap:8px; flex-wrap:wrap; }
+  .forklaring { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; margin-top:14px;
+                color:var(--mut); font-size:.85rem; line-height:1.4; }
+  .forklaring .strek { width:22px; height:0; margin-top:.6em; }
 </style>
 </head>
 <body>
@@ -62,7 +65,15 @@
     </div>
   </div>
 
-  <div class="card"><canvas id="graf" height="150"></canvas></div>
+  <div class="card">
+    <canvas id="graf" height="150"></canvas>
+    <div class="forklaring">
+      <div class="strek" style="border-top:2px solid #4f8cff"></div>
+      <div><b>Strøm (snitt):</b> gjennomsnittet av ca. 250 målinger hvert ¼ sekund. Viser strømmen som faktisk går til våpenet. Støyen nuller seg ut, så den ligger på 0 A når våpenet står stille.</div>
+      <div class="strek" style="border-top:2px dashed #f5b942"></div>
+      <div><b>Topp:</b> den høyeste enkeltmålingen hvert ¼ sekund. Fanger korte strømtopper (oppspinn, slag) som snittet glatter bort. I hvile ligger den på ca. 0,8 A – det er ikke ekte strøm, men målestøy (støygulvet til sensoren).</div>
+    </div>
+  </div>
 
   <div class="card row">
     <div class="knapper">
@@ -113,8 +124,8 @@ let sisteKey = null;
 const chart = new Chart($("graf"), {
   type: "line",
   data: { labels: [], datasets: [
-    { label: "Strøm, snitt 2 s (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, cubicInterpolationMode: "monotone" },
-    { label: "Topp, snitt 2 s (A)",  data: [], borderColor: "#f5b942", borderWidth: 1.5, pointRadius: 0, cubicInterpolationMode: "monotone", borderDash: [4, 3] }
+    { label: "Strøm, snitt (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, cubicInterpolationMode: "monotone" },
+    { label: "Topp (A)",  data: [], borderColor: "#f5b942", borderWidth: 1.5, pointRadius: 0, cubicInterpolationMode: "monotone", borderDash: [4, 3] }
   ]},
   options: { animation: false,
     plugins: { legend: { labels: { color: "#8a90a0" } } },
