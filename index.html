@@ -81,6 +81,31 @@ const POLL_MS  = 500;     // hvor ofte siden henter nye målinger
 const STALE_MS = 3000;    // regnes som "ikke live" etter så lenge uten data
 const BATT_LAV = 20;      // % – samme som BATT_ADVARSEL i koden
 
+// ---------- Filtrering (bare visning – CSV får rådata) ----------
+const GRAF_VINDU   = 8;     // glidende snitt over 8 punkter = 2 s (lavpassfilter)
+const GRAF_DOEDBAND = 0.2;  // A: |strøm| under dette vises som 0 (sensorstøy i hvile)
+const BATT_VINDU   = 60;    // median av siste 60 målinger = 15 s
+const BATT_STEG_P  = 5;     // % vises i steg på 5
+let vistBattP = null;       // prosenten som vises nå (med hysterese)
+
+// Glidende snitt: hvert punkt = snittet av seg selv og de (vindu-1) forrige
+function glidendeSnitt(arr, vindu) {
+  const ut = []; let sum = 0;
+  for (let i = 0; i < arr.length; i++) {
+    sum += arr[i];
+    if (i >= vindu) sum -= arr[i - vindu];
+    ut.push(sum / Math.min(i + 1, vindu));
+  }
+  return ut;
+}
+// Median er robust mot enkeltstående hopp (bedre enn snitt for batteriet)
+function median(arr) {
+  const a = arr.filter(x => typeof x === "number").sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = Math.floor(a.length / 2);
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
 const $ = id => document.getElementById(id);
 let punkter = [];
 let sisteKey = null;
@@ -88,8 +113,8 @@ let sisteKey = null;
 const chart = new Chart($("graf"), {
   type: "line",
   data: { labels: [], datasets: [
-    { label: "Strøm (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, tension: .2 },
-    { label: "Topp (A)",  data: [], borderColor: "#f5b942", borderWidth: 1, pointRadius: 0, tension: 0, borderDash: [4, 3] }
+    { label: "Strøm, snitt 2 s (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, cubicInterpolationMode: "monotone" },
+    { label: "Topp, snitt 2 s (A)",  data: [], borderColor: "#f5b942", borderWidth: 1.5, pointRadius: 0, cubicInterpolationMode: "monotone", borderDash: [4, 3] }
   ]},
   options: { animation: false,
     plugins: { legend: { labels: { color: "#8a90a0" } } },
@@ -105,10 +130,19 @@ function tegn() {
 
   $("maks").textContent = f1(s.maks);
 
-  $("bp").textContent = s.bp ?? "–";
-  $("bv").textContent = typeof s.bv === "number" ? s.bv.toFixed(2) : "–";
-  $("bpBar").style.width = (s.bp ?? 0) + "%";
-  $("bpBar").style.background = (s.bp ?? 100) <= BATT_LAV ? "var(--err)" : "var(--ok)";
+  // Batteri: median over 15 s, % i steg på 5 med hysterese (endres bare ved tydelig endring)
+  const siste = punkter.slice(-BATT_VINDU);
+  const bvMed = median(siste.map(p => p.bv));
+  const bpMed = median(siste.map(p => p.bp));
+  if (bpMed !== null) {
+    if (vistBattP === null || Math.abs(bpMed - vistBattP) >= BATT_STEG_P * 0.8) {
+      vistBattP = Math.round(bpMed / BATT_STEG_P) * BATT_STEG_P;
+    }
+  }
+  $("bp").textContent = vistBattP ?? "–";
+  $("bv").textContent = bvMed !== null ? bvMed.toFixed(1) : "–";
+  $("bpBar").style.width = (vistBattP ?? 0) + "%";
+  $("bpBar").style.background = (vistBattP ?? 100) <= BATT_LAV ? "var(--err)" : "var(--ok)";
 
   $("drv").textContent = s.drv ?? "–";
   $("drvBar").style.width = Math.min(s.drv ?? 0, 100) + "%";
@@ -123,8 +157,9 @@ function tegn() {
   $("tripA").textContent = f1(s.trip);
 
   chart.data.labels = punkter.map(p => new Date(p.t).toLocaleTimeString());
-  chart.data.datasets[0].data = punkter.map(p => p.i);
-  chart.data.datasets[1].data = punkter.map(p => p.topp);
+  const db = x => (Math.abs(x) < GRAF_DOEDBAND ? 0 : x);
+  chart.data.datasets[0].data = glidendeSnitt(punkter.map(p => p.i ?? 0), GRAF_VINDU).map(db);
+  chart.data.datasets[1].data = glidendeSnitt(punkter.map(p => p.topp ?? 0), GRAF_VINDU).map(db);
   chart.update();
 }
 
@@ -174,7 +209,7 @@ $("reset").onclick = async () => {
 $("slett").onclick = async () => {
   if (!confirm("Slette ALLE lagrede målinger i databasen? Dette kan ikke angres.")) return;
   await fetch(DB_URL + "/readings.json", { method: "DELETE" });
-  punkter = []; sisteKey = null;
+  punkter = []; sisteKey = null; vistBattP = null;
   chart.data.labels = []; chart.data.datasets.forEach(ds => ds.data = []); chart.update();
   $("info").textContent = "Alle målinger slettet.";
 };
