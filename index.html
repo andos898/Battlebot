@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battlebot – live</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --txt:#e8eaf0; --mut:#8a90a0; --acc:#4f8cff; --topp:#f5b942;
+          --ok:#3ecf8e; --err:#ff5c5c; --warn:#f5b942; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--txt);
+         display:flex; justify-content:center; padding:20px; }
+  main { width:100%; max-width:900px; display:grid; gap:14px; }
+  .card { background:var(--card); border-radius:14px; padding:18px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:1.2rem; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--mut); margin-right:6px; }
+  .dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); } .dot.err { background:var(--err); }
+  .status { color:var(--mut); font-size:.9rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:14px; }
+  .lbl { color:var(--mut); font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; }
+  .val { font-size:1.7rem; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .val small { font-size:.9rem; color:var(--mut); font-weight:500; }
+  .big .val { font-size:3.2rem; }
+  #alarm { display:none; background:var(--err); color:#fff; font-weight:700; text-align:center; }
+  .bar { height:6px; background:#2a2f3a; border-radius:3px; margin-top:8px; overflow:hidden; }
+  .bar > div { height:100%; background:var(--ok); width:0; transition:width .3s; }
+  button { background:var(--acc); color:#fff; border:0; border-radius:10px; padding:9px 16px; font-size:.95rem; cursor:pointer; }
+  button.sec { background:#2a2f3a; }
+  button.danger { background:#3a2226; color:#ff8a8a; }
+  .knapper { display:flex; gap:8px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card row">
+    <h1>Battlebot – live</h1>
+    <div class="status"><span id="liveDot" class="dot"></span><span id="liveTxt">Venter på data…</span></div>
+  </div>
+
+  <div id="alarm" class="card">OVERSTRØM! Våpenet kuttet ved <span id="tripA">–</span> A. Slå bryteren av og på.</div>
+
+  <div class="grid">
+    <div class="card big"><div class="lbl">Strøm</div><div class="val"><span id="i">–</span> <small>A</small></div></div>
+    <div class="card big"><div class="lbl">Maks (siden nullstilling)</div><div class="val"><span id="maks">–</span> <small>A</small></div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="lbl">Topp (siste ¼ s)</div><div class="val"><span id="topp">–</span> <small>A</small></div></div>
+    <div class="card"><div class="lbl">Gass til ESC</div><div class="val"><span id="gass">–</span> <small>µs</small></div></div>
+    <div class="card"><div class="lbl">ESC</div><div class="val" id="esc">–</div></div>
+    <div class="card"><div class="lbl">CH1 (styring)</div><div class="val"><span id="ch1">–</span> <small>µs</small></div></div>
+    <div class="card">
+      <div class="lbl">Batteri</div>
+      <div class="val"><span id="bv">–</span> <small>V (<span id="bp">–</span> %)</small></div>
+      <div class="bar"><div id="bpBar"></div></div>
+    </div>
+  </div>
+
+  <div class="card"><canvas id="graf" height="150"></canvas></div>
+
+  <div class="card row">
+    <div class="knapper">
+      <button id="reset">Nullstill maks</button>
+      <button id="csv" class="sec">Last ned CSV</button>
+    </div>
+    <button id="slett" class="danger">Slett alle målinger</button>
+  </div>
+  <div class="status" id="info"></div>
+</main>
+
+<script>
+const DB_URL   = "https://battlebot-5760d-default-rtdb.europe-west1.firebasedatabase.app";
+const MAX_PTS  = 240;     // punkter i grafen (4 per sekund -> ca. 60 s)
+const POLL_MS  = 500;     // hvor ofte siden henter nye målinger
+const STALE_MS = 3000;    // regnes som "ikke live" etter så lenge uten data
+const BATT_LAV = 20;      // % – samme som BATT_ADVARSEL i koden
+
+const $ = id => document.getElementById(id);
+let punkter = [];         // [{key, ...måling}]
+let sisteKey = null;
+
+const chart = new Chart($("graf"), {
+  type: "line",
+  data: { labels: [], datasets: [
+    { label: "Strøm (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, tension: .2 },
+    { label: "Topp (A)",  data: [], borderColor: "#f5b942", borderWidth: 1, pointRadius: 0, tension: 0, borderDash: [4, 3] }
+  ]},
+  options: { animation: false,
+    plugins: { legend: { labels: { color: "#8a90a0" } } },
+    scales: { x: { ticks: { color: "#8a90a0", maxTicksLimit: 6 }, grid: { color: "#22262f" } },
+              y: { ticks: { color: "#8a90a0" }, grid: { color: "#22262f" }, beginAtZero: true } } }
+});
+
+const f1 = x => (typeof x === "number" ? x.toFixed(1) : "–");
+
+function tegn() {
+  if (!punkter.length) return;
+  const s = punkter[punkter.length - 1];
+
+  $("i").textContent    = f1(s.i);
+  $("maks").textContent = f1(s.maks);
+  $("topp").textContent = f1(s.topp);
+  $("gass").textContent = s.gass ?? "–";
+  $("esc").textContent  = s.esc ?? "–";
+  $("ch1").textContent  = s.ch1 ?? "–";
+  $("bv").textContent   = f1(s.bv);
+  $("bp").textContent   = s.bp ?? "–";
+  $("bpBar").style.width = (s.bp ?? 0) + "%";
+  $("bpBar").style.background = (s.bp ?? 100) <= BATT_LAV ? "var(--err)" : "var(--ok)";
+
+  $("alarm").style.display = s.ov ? "block" : "none";
+  $("tripA").textContent = f1(s.trip);
+  $("info").textContent = s.sens === false ? "ADVARSEL: strømsensoren svarer ikke – våpenet er sperret." : "";
+
+  chart.data.labels = punkter.map(p => new Date(p.t).toLocaleTimeString());
+  chart.data.datasets[0].data = punkter.map(p => p.i);
+  chart.data.datasets[1].data = punkter.map(p => p.topp);
+  chart.update();
+}
+
+function liveStatus(feil) {
+  const dot = $("liveDot"), txt = $("liveTxt");
+  if (feil) { dot.className = "dot err"; txt.textContent = "Får ikke kontakt med databasen"; return; }
+  if (!punkter.length) { dot.className = "dot"; txt.textContent = "Venter på data…"; return; }
+  const alder = Date.now() - punkter[punkter.length - 1].t;
+  if (alder < STALE_MS) { dot.className = "dot ok"; txt.textContent = "Live"; }
+  else { dot.className = "dot warn"; txt.textContent = "Ingen nye data på " + Math.round(alder / 1000) + " s"; }
+}
+
+// Første gang: hent de siste MAX_PTS. Deretter: bare det som er nytt siden sisteKey.
+async function hent() {
+  try {
+    const q = sisteKey
+      ? 'orderBy="$key"&startAt="' + sisteKey + '"'
+      : 'orderBy="$key"&limitToLast=' + MAX_PTS;
+    const r = await fetch(DB_URL + "/readings.json?" + q);
+    const d = await r.json();
+    if (d && typeof d === "object") {
+      const nye = Object.keys(d).sort().filter(k => k !== sisteKey).map(k => ({ key: k, ...d[k] }));
+      if (nye.length) {
+        punkter = punkter.concat(nye).slice(-MAX_PTS);
+        sisteKey = nye[nye.length - 1].key;
+        tegn();
+      }
+    }
+    liveStatus(false);
+  } catch (e) {
+    liveStatus(true);
+  }
+}
+setInterval(hent, POLL_MS);
+hent();
+
+$("reset").onclick = async () => {
+  await fetch(DB_URL + "/cmd/reset.json", { method: "PUT", body: "true" });
+  $("info").textContent = "Nullstilling sendt – roboten plukker den opp innen 2 s.";
+};
+
+$("slett").onclick = async () => {
+  if (!confirm("Slette ALLE lagrede målinger i databasen? Dette kan ikke angres.")) return;
+  await fetch(DB_URL + "/readings.json", { method: "DELETE" });
+  punkter = []; sisteKey = null;
+  chart.data.labels = []; chart.data.datasets.forEach(ds => ds.data = []); chart.update();
+  $("info").textContent = "Alle målinger slettet.";
+};
+
+$("csv").onclick = () => {
+  const kol = ["t", "ms", "i", "topp", "maks", "gass", "esc", "bv", "bp", "ch1", "ov", "trip"];
+  const csv = ["tid," + kol.slice(1).join(",")]
+    .concat(punkter.map(p => [new Date(p.t).toISOString(), ...kol.slice(1).map(k => p[k])].join(",")))
+    .join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "battlebot_maalinger.csv";
+  a.click();
+};
+</script>
+</body>
+</html>
