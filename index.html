@@ -18,7 +18,7 @@
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--mut); margin-right:6px; }
   .dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); } .dot.err { background:var(--err); }
   .status { color:var(--mut); font-size:.9rem; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(135px, 1fr)); gap:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:14px; }
   .lbl { color:var(--mut); font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; }
   .val { font-size:2.1rem; white-space:nowrap; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
   .val small { font-size:.9rem; color:var(--mut); font-weight:500; }
@@ -63,10 +63,6 @@
       <div class="lbl">Våpen</div>
       <div class="val"><span id="vap">–</span> <small>%</small></div>
       <div class="bar"><div id="vapBar" style="background:var(--warn)"></div></div>
-    </div>
-    <div class="card">
-      <div class="lbl">Våpenbryter</div>
-      <div class="val" id="sw" style="font-size:1.6rem">–</div>
     </div>
     <div class="card">
       <div class="lbl">Kontroller</div>
@@ -184,13 +180,6 @@ function tegn() {
   else                     { rc.textContent = "–";              rc.className = "val"; }
   rc.style.fontSize = "1.6rem";
 
-  // SE-bryteren på kontrolleren (bare visning – styrer ingenting)
-  const sw = $("sw");
-  if (s.sw === true)       { sw.textContent = "PÅ"; sw.className = "val"; sw.style.color = "var(--warn)"; }
-  else if (s.sw === false) { sw.textContent = "AV"; sw.className = "val"; sw.style.color = "var(--mut)"; }
-  else                     { sw.textContent = "–";  sw.className = "val"; sw.style.color = ""; }
-  sw.style.fontSize = "1.6rem";
-
   $("alarm").style.display = s.ov ? "block" : "none";
   $("tripA").textContent = f1(s.trip);
 
@@ -254,7 +243,7 @@ $("slett").onclick = async () => {
 };
 
 $("csv").onclick = () => {
-  const kol = ["ms", "i", "topp", "maks", "gass", "drv", "rc", "sw", "esc", "bv", "bp", "ch1", "ov", "trip"];
+  const kol = ["ms", "i", "topp", "maks", "gass", "drv", "rc", "esc", "bv", "bp", "ch1", "ov", "trip"];
   const csv = ["tid," + kol.join(",")]
     .concat(punkter.map(p => [new Date(p.t).toISOString(), ...kol.map(k => p[k])].join(",")))
     .join("\n");
