@@ -18,10 +18,10 @@
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--mut); margin-right:6px; }
   .dot.ok { background:var(--ok); } .dot.warn { background:var(--warn); } .dot.err { background:var(--err); }
   .status { color:var(--mut); font-size:.9rem; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:14px; }
   .lbl { color:var(--mut); font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; }
-  .val { font-size:2.4rem; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
-  .val small { font-size:1rem; color:var(--mut); font-weight:500; }
+  .val { font-size:2.1rem; white-space:nowrap; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .val small { font-size:.9rem; color:var(--mut); font-weight:500; }
   .bar { height:6px; background:#2a2f3a; border-radius:3px; margin-top:10px; overflow:hidden; }
   .bar > div { height:100%; width:0; background:var(--ok); transition:width .3s; }
   .ok-txt { color:var(--ok); } .err-txt { color:var(--err); }
@@ -60,6 +60,11 @@
       <div class="bar"><div id="drvBar" style="background:var(--acc)"></div></div>
     </div>
     <div class="card">
+      <div class="lbl">Våpen</div>
+      <div class="val"><span id="vap">–</span> <small>%</small></div>
+      <div class="bar"><div id="vapBar" style="background:var(--warn)"></div></div>
+    </div>
+    <div class="card">
       <div class="lbl">Kontroller</div>
       <div class="val" id="rc" style="font-size:1.6rem">–</div>
     </div>
@@ -72,6 +77,8 @@
       <div><b>Strøm (snitt):</b> gjennomsnittet av ca. 250 målinger hvert ¼ sekund. Viser strømmen som faktisk går til våpenet. Støyen nuller seg ut, så den ligger på 0 A når våpenet står stille.</div>
       <div class="strek" style="border-top:2px dashed #f5b942"></div>
       <div><b>Topp:</b> den høyeste enkeltmålingen hvert ¼ sekund. Fanger korte strømtopper (oppspinn, slag) som snittet glatter bort. I hvile ligger den på ca. 0,8 A – det er ikke ekte strøm, men målestøy (støygulvet til sensoren).</div>
+      <div class="strek" style="border-top:2px solid #3ecf8e"></div>
+      <div><b>Batteri:</b> spenningen i volt (høyre akse). Synker når våpenet trekker strøm, og henter seg inn igjen etterpå.</div>
     </div>
   </div>
 
@@ -125,12 +132,16 @@ const chart = new Chart($("graf"), {
   type: "line",
   data: { labels: [], datasets: [
     { label: "Strøm, snitt (A)", data: [], borderColor: "#4f8cff", borderWidth: 2, pointRadius: 0, cubicInterpolationMode: "monotone" },
-    { label: "Topp (A)",  data: [], borderColor: "#f5b942", borderWidth: 1.5, pointRadius: 0, cubicInterpolationMode: "monotone", borderDash: [4, 3] }
+    { label: "Topp (A)",  data: [], borderColor: "#f5b942", borderWidth: 1.5, pointRadius: 0, cubicInterpolationMode: "monotone", borderDash: [4, 3] },
+    { label: "Batteri (V)", yAxisID: "yU", data: [], borderColor: "#3ecf8e", borderWidth: 2, pointRadius: 0, cubicInterpolationMode: "monotone" }
   ]},
   options: { animation: false,
     plugins: { legend: { labels: { color: "#8a90a0" } } },
     scales: { x: { ticks: { color: "#8a90a0", maxTicksLimit: 6 }, grid: { color: "#22262f" } },
-              y: { ticks: { color: "#8a90a0" }, grid: { color: "#22262f" }, beginAtZero: true } } }
+              y: { ticks: { color: "#8a90a0" }, grid: { color: "#22262f" }, beginAtZero: true,
+                   title: { display: true, text: "Strøm (A)", color: "#8a90a0" } },
+              yU: { position: "right", suggestedMin: 11.5, suggestedMax: 13, grid: { drawOnChartArea: false },
+                    ticks: { color: "#3ecf8e" }, title: { display: true, text: "Batteri (V)", color: "#3ecf8e" } } } }
 });
 
 const f1 = x => (typeof x === "number" ? x.toFixed(1) : "–");
@@ -158,6 +169,11 @@ function tegn() {
   $("drv").textContent = s.drv ?? "–";
   $("drvBar").style.width = Math.min(s.drv ?? 0, 100) + "%";
 
+  // Våpen: 1000 µs = 0 %, 2000 µs = 100 % (standard ESC-signal)
+  const vap = typeof s.gass === "number" ? Math.max(0, Math.round((s.gass - 1000) / 10)) : null;
+  $("vap").textContent = vap ?? "–";
+  $("vapBar").style.width = Math.min(vap ?? 0, 100) + "%";
+
   const rc = $("rc");
   if (s.rc === true)       { rc.textContent = "Tilkoblet";      rc.className = "val ok-txt"; }
   else if (s.rc === false) { rc.textContent = "Ikke tilkoblet"; rc.className = "val err-txt"; }
@@ -168,9 +184,10 @@ function tegn() {
   $("tripA").textContent = f1(s.trip);
 
   chart.data.labels = punkter.map(p => new Date(p.t).toLocaleTimeString());
-  const db = x => (Math.abs(x) < GRAF_DOEDBAND ? 0 : x);
+  const db = x => (x < GRAF_DOEDBAND ? 0 : x);   // under dødbåndet (og negativ støy) vises som 0
   chart.data.datasets[0].data = glidendeSnitt(punkter.map(p => p.i ?? 0), GRAF_VINDU).map(db);
   chart.data.datasets[1].data = glidendeSnitt(punkter.map(p => p.topp ?? 0), GRAF_VINDU).map(db);
+  chart.data.datasets[2].data = glidendeSnitt(punkter.map(p => p.bv ?? 0), GRAF_VINDU);
   chart.update();
 }
 
